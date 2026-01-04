@@ -340,10 +340,10 @@ function renderDay(){
         <button class="btn btn--danger del">✕</button>
       `;
 
-      const [SeriesI, repsI,kgI,rirI] = row.querySelectorAll("input");
+      const [seriesI, repsI,kgI,rirI] = row.querySelectorAll("input");
 
       const commit = ()=>{
-        s.series = SeriesI.value;
+        s.series = seriesI.value;
         s.reps = repsI.value;
         s.kg   = kgI.value;
         s.rir  = rirI.value;

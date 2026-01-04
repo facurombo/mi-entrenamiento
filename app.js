@@ -81,10 +81,10 @@ function openPrompt({ title, label, placeholder="", value="" }){
 
 function normalizeSet(s){
   const series = (s?.series ?? "").toString();
-  const reps = (s?.reps ?? "").toString();
-  const kg   = (s?.kg ?? "").toString();
-  const rir  = (s?.rir ?? "").toString();
-  return {series, reps, kg, rir };
+  const reps   = (s?.reps ?? "").toString();
+  const kg     = (s?.kg ?? "").toString();
+  const rir    = (s?.rir ?? "").toString();
+  return { series, reps, kg, rir };
 }
 
 function normalizeExercise(ex){
@@ -104,22 +104,17 @@ function normalizeExercise(ex){
 }
 
 function parseBulk(text){
-  // Permitimos pegar JSON con comillas raras copiadas de WhatsApp
   const cleaned = text.trim();
-
   const parsed = JSON.parse(cleaned);
 
-  // Caso 1: array de ejercicios
   if(Array.isArray(parsed)){
     return parsed.map(normalizeExercise).filter(Boolean);
   }
 
-  // Caso 2: { exercises: [...] }
   if(parsed && Array.isArray(parsed.exercises)){
     return parsed.exercises.map(normalizeExercise).filter(Boolean);
   }
 
-  // Caso 3: { days:[{ exercises:[...] }]}
   if(parsed && Array.isArray(parsed.days) && parsed.days[0]?.exercises){
     return parsed.days[0].exercises.map(normalizeExercise).filter(Boolean);
   }
@@ -218,7 +213,6 @@ function renderDay(){
     <div id="exercises"></div>
   `;
 
-  // Botón: cargar ejercicios desde texto pegado
   document.getElementById("bulkLoad").onclick = () => {
     $bulkText.value = "";
     $bulkModal.showModal();
@@ -237,7 +231,6 @@ function renderDay(){
           return;
         }
 
-        // Reemplaza TODOS los ejercicios del día (más simple y seguro)
         day.exercises = exercises;
 
         saveState();
@@ -248,7 +241,6 @@ function renderDay(){
     }, { once:true });
   };
 
-  // Botón: + ejercicio manual
   document.getElementById("addExercise").onclick = async ()=>{
     const name = await openPrompt({
       title:"Nuevo ejercicio",
@@ -292,14 +284,12 @@ function renderDay(){
         <button class="btn btn--primary" data-add>+ Serie</button>
       </div>
 
-      <!-- NOTAS SIEMPRE ABAJO -->
       <div class="noteBlock">
         <div class="smallLabel">Notas del ejercicio</div>
         <input class="input" data-note placeholder="Opcional" value="${esc(ex.note || "")}">
       </div>
     `;
 
-    /* acciones ejercicio */
     card.querySelector("[data-r]").onclick = async ()=>{
       const n = await openPrompt({
         title:"Renombrar ejercicio",
@@ -319,53 +309,51 @@ function renderDay(){
       render();
     };
 
-    /* nota */
     const noteInput = card.querySelector("[data-note]");
     noteInput.oninput = ()=>{
       ex.note = noteInput.value;
       saveState();
     };
 
-    /* series */
     const table = card.querySelector(".setTable");
 
     ex.sets.forEach((s,i)=>{
       const row = document.createElement("div");
       row.className = "setRow";
       row.innerHTML = `
-      <input class="input" inputmode="numeric" placeholder="Series" value="${esc(s.series)}">
+        <input class="input" inputmode="numeric" placeholder="Series" value="${esc(s.series ?? "")}">
         <input class="input" inputmode="numeric" placeholder="Reps" value="${esc(s.reps ?? "")}">
         <input class="input" inputmode="numeric" placeholder="Kg" value="${esc(s.kg ?? "")}">
         <input class="input" inputmode="numeric" placeholder="RIR" value="${esc(s.rir ?? "")}">
         <button class="btn btn--danger del">✕</button>
       `;
 
-      const [seriesI, repsI,kgI,rirI] = row.querySelectorAll("input");
+      const [seriesI, repsI, kgI, rirI] = row.querySelectorAll("input");
 
       const commit = ()=>{
         s.series = seriesI.value;
-        s.reps = repsI.value;
-        s.kg   = kgI.value;
-        s.rir  = rirI.value;
+        s.reps   = repsI.value;
+        s.kg     = kgI.value;
+        s.rir    = rirI.value;
         saveState();
       };
 
-      SeriesI.oninput = commit;
-      repsI.oninput = commit;
-      kgI.oninput   = commit;
-      rirI.oninput  = commit;
+      seriesI.oninput = commit;   // ✅ FIX MINIMO: era SeriesI
+      repsI.oninput   = commit;
+      kgI.oninput     = commit;
+      rirI.oninput    = commit;
 
       row.querySelector("button").onclick = () => {
         if (ex.sets.length === 1) {
-            ex.sets[0] = blankSet();
+          ex.sets[0] = blankSet();
         } else {
-            ex.sets.splice(i, 1);
+          ex.sets.splice(i, 1);
         }
         saveState();
         render();
-        };
+      };
 
-        table.appendChild(row);
+      table.appendChild(row);
     });
 
     card.querySelector("[data-add]").onclick = ()=>{

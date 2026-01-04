@@ -80,10 +80,11 @@ function openPrompt({ title, label, placeholder="", value="" }){
 /* ============ BULK IMPORT HELPERS ============ */
 
 function normalizeSet(s){
+  const series = (s?.series ?? "").toString();
   const reps = (s?.reps ?? "").toString();
   const kg   = (s?.kg ?? "").toString();
   const rir  = (s?.rir ?? "").toString();
-  return { reps, kg, rir };
+  return {series, reps, kg, rir };
 }
 
 function normalizeExercise(ex){

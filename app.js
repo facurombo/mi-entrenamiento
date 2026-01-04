@@ -21,6 +21,9 @@ const $bulkText  = document.getElementById("bulkText");
 let state = loadState();
 let selectedDayId = state.days[0]?.id ?? null;
 
+/* ===== Calendario (mes visible) ===== */
+let calView = { y: new Date().getFullYear(), m: new Date().getMonth() }; // m: 0-11
+
 /* ================= UTIL ================= */
 
 function uid(){
@@ -34,12 +37,14 @@ function saveState(){
 function loadState(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return { days: [] };
+    if(!raw) return { days: [], history: [] };
+
     const parsed = JSON.parse(raw);
-    if(!parsed?.days) return { days: [] };
+    if(!parsed?.days) parsed.days = [];
+    if(!Array.isArray(parsed.history)) parsed.history = []; // ✅ migración
     return parsed;
   }catch{
-    return { days: [] };
+    return { days: [], history: [] };
   }
 }
 
@@ -75,6 +80,262 @@ function openPrompt({ title, label, placeholder="", value="" }){
       resolve(v || null);
     }, { once:true });
   });
+}
+
+/* fecha/hora */
+function nowISO(){
+  return new Date().toISOString();
+}
+
+function fmtDateTime(iso){
+  const d = new Date(iso);
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  const hh = String(d.getHours()).padStart(2,"0");
+  const mi = String(d.getMinutes()).padStart(2,"0");
+  return `${yy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+/* snapshot del día */
+function cloneWorkoutDay(day){
+  return {
+    name: day.name,
+    exercises: (day.exercises || []).map(ex => ({
+      name: ex.name,
+      note: ex.note || "",
+      sets: (ex.sets || []).map(s => ({
+        series: s.series ?? "",
+        reps:   s.reps ?? "",
+        kg:     s.kg ?? "",
+        rir:    s.rir ?? ""
+      }))
+    }))
+  };
+}
+
+/* ===== Calendario helpers ===== */
+function ymdLocal(dateObj){
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth()+1).padStart(2,"0");
+  const d = String(dateObj.getDate()).padStart(2,"0");
+  return `${y}-${m}-${d}`;
+}
+
+function ymdFromISO(iso){
+  return ymdLocal(new Date(iso));
+}
+
+function monthLabel(y,m){
+  const names = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+  return `${names[m]} ${y}`;
+}
+
+/* render detalle en página (NO alerts) */
+function workoutDetailsHTML(item){
+  const sleep = (typeof item.sleepScore === "number") ? `${item.sleepScore}/10` : "-";
+  const eat   = (typeof item.eatScore === "number") ? `${item.eatScore}/10` : "-";
+
+  const w = item.workout || { exercises: [] };
+  const exHTML = (w.exercises || []).map(ex=>{
+    const setsHTML = (ex.sets || []).map(s=>{
+      const series = esc(s.series ?? "");
+      const reps   = esc(s.reps ?? "");
+      const kg     = esc(s.kg ?? "");
+      const rir    = esc(s.rir ?? "");
+
+      const left = series ? `${series}x` : "";
+      const mid  = reps ? `${reps}` : "";
+      const right= kg ? `@${kg}kg` : "";
+      const tail = rir ? ` RIR${rir}` : "";
+
+      return `<div class="dayItem__small">• ${esc(`${left}${mid} ${right}${tail}`.trim())}</div>`;
+    }).join("");
+
+    const note = (ex.note || "").trim();
+    const noteHTML = note ? `<div class="dayItem__small">Nota: ${esc(note)}</div>` : "";
+
+    return `
+      <div class="card" style="padding:10px;">
+        <div style="font-weight:900; font-size:14px;">${esc(ex.name)}</div>
+        <div style="margin-top:6px; display:flex; flex-direction:column; gap:4px;">
+          ${setsHTML || `<div class="dayItem__small">Sin líneas</div>`}
+          ${noteHTML}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="card" style="padding:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+        <div>
+          <div style="font-weight:900; font-size:16px;">${esc(item.dayName)}</div>
+          <div class="muted">${esc(fmtDateTime(item.at))}</div>
+          <div class="muted">Dormí: ${esc(sleep)} · Comí: ${esc(eat)}</div>
+        </div>
+        <button class="btn btn--danger" data-close-detail>✕</button>
+      </div>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      ${exHTML || `<div class="empty">Sin ejercicios guardados.</div>`}
+    </div>
+  `;
+}
+
+function renderCalendarForDay(day, hostEl){
+  const y = calView.y;
+  const m = calView.m;
+
+  const first = new Date(y, m, 1);
+  const last  = new Date(y, m+1, 0);
+
+  const startDow = (first.getDay() + 6) % 7; // lunes=0 ... domingo=6
+  const daysInMonth = last.getDate();
+
+  const entries = (state.history || []).filter(h => h.dayId === day.id);
+  const map = new Map();
+  for(const e of entries){
+    const key = ymdFromISO(e.at);
+    if(!map.has(key)) map.set(key, []);
+    map.get(key).push(e);
+  }
+
+  hostEl.innerHTML = `
+    <div class="cal">
+      <div class="calHead">
+        <button id="calPrev" class="btn">◀</button>
+        <div class="calTitle">${monthLabel(y,m)}</div>
+        <button id="calNext" class="btn">▶</button>
+      </div>
+
+      <div class="calGrid">
+        <div class="calDow">L</div><div class="calDow">M</div><div class="calDow">X</div><div class="calDow">J</div><div class="calDow">V</div><div class="calDow">S</div><div class="calDow">D</div>
+      </div>
+
+      <div id="calCells" class="calGrid" style="margin-top:8px;"></div>
+
+      <!-- Lista de registros del día tocado -->
+      <div id="calDetailList" class="calList"></div>
+
+      <!-- Detalle en página (lo que antes era alert) -->
+      <div id="calDetailView" style="margin-top:10px; display:none;"></div>
+    </div>
+  `;
+
+  const $cells     = hostEl.querySelector("#calCells");
+  const $detailLst = hostEl.querySelector("#calDetailList");
+  const $detailVw  = hostEl.querySelector("#calDetailView");
+
+  function showDetail(item){
+    $detailVw.style.display = "";
+    $detailVw.innerHTML = workoutDetailsHTML(item);
+
+    $detailVw.querySelector("[data-close-detail]").onclick = () => {
+      $detailVw.style.display = "none";
+      $detailVw.innerHTML = "";
+    };
+  }
+
+  function renderDayEntriesList(key, list){
+    if(!list.length){
+      $detailLst.innerHTML = `<div class="pill">Sin registros el ${esc(key)}</div>`;
+      $detailVw.style.display = "none";
+      $detailVw.innerHTML = "";
+      return;
+    }
+
+    $detailLst.innerHTML = list.map(e => {
+      const sleep = (typeof e.sleepScore === "number") ? `${e.sleepScore}/10` : "-";
+      const eat   = (typeof e.eatScore === "number") ? `${e.eatScore}/10` : "-";
+      return `
+        <div class="calItem">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div>
+              <div><b>${esc(fmtDateTime(e.at))}</b></div>
+              <div class="calItemSmall">Dormí: ${esc(sleep)} · Comí: ${esc(eat)}</div>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+              <button class="btn" data-view="${esc(e.id)}">Ver</button>
+              <button class="btn btn--danger" data-del="${esc(e.id)}">✕</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    // bind Ver
+    $detailLst.querySelectorAll("[data-view]").forEach(btn=>{
+      btn.onclick = () => {
+        const id = btn.getAttribute("data-view");
+        const item = (state.history || []).find(h => h.id === id);
+        if(!item) return;
+        showDetail(item);
+        // scroll al detalle (iPhone friendly)
+        $detailVw.scrollIntoView({ behavior:"smooth", block:"start" });
+      };
+    });
+
+    // bind borrar
+    $detailLst.querySelectorAll("[data-del]").forEach(btn=>{
+      btn.onclick = () => {
+        const id = btn.getAttribute("data-del");
+        if(!confirm("¿Borrar este registro?")) return;
+        state.history = (state.history || []).filter(h => h.id !== id);
+        saveState();
+        render(); // refresca todo (calendario incluido)
+      };
+    });
+  }
+
+  // celdas "vacías" antes del 1
+  for(let i=0;i<startDow;i++){
+    const c = document.createElement("div");
+    c.className = "calCell calCell--off";
+    $cells.appendChild(c);
+  }
+
+  // celdas del mes
+  for(let d=1; d<=daysInMonth; d++){
+    const dt = new Date(y, m, d);
+    const key = ymdLocal(dt);
+    const list = map.get(key) || [];
+
+    const cell = document.createElement("div");
+    cell.className = "calCell";
+    cell.innerHTML = `
+      <button data-key="${key}">
+        <div class="calDayRow">
+          <div class="calDayNum">${d}</div>
+          ${list.length ? `<div class="calBadge">${list.length}</div>` : ``}
+        </div>
+      </button>
+    `;
+
+    cell.querySelector("button").onclick = () => {
+      renderDayEntriesList(key, list);
+      // scroll a lista
+      $detailLst.scrollIntoView({ behavior:"smooth", block:"start" });
+    };
+
+    $cells.appendChild(cell);
+  }
+
+  // navegación
+  hostEl.querySelector("#calPrev").onclick = () => {
+    calView.m--;
+    if(calView.m < 0){ calView.m = 11; calView.y--; }
+    render();
+  };
+
+  hostEl.querySelector("#calNext").onclick = () => {
+    calView.m++;
+    if(calView.m > 11){ calView.m = 0; calView.y++; }
+    render();
+  };
+
+  // estado inicial
+  $detailLst.innerHTML = `<div class="pill">Tocá un día para ver registros</div>`;
 }
 
 /* ============ BULK IMPORT HELPERS ============ */
@@ -156,6 +417,8 @@ function renderDays(){
     el.onclick = e=>{
       if(e.target.tagName === "BUTTON") return;
       selectedDayId = day.id;
+      // opcional: reset mes a actual cuando cambiás día
+      calView = { y: new Date().getFullYear(), m: new Date().getMonth() };
       render();
     };
 
@@ -211,8 +474,15 @@ function renderDay(){
     </div>
 
     <div id="exercises"></div>
+
+    <!-- GUARDAR + CALENDARIO -->
+    <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
+      <button id="saveWorkout" class="btn btn--primary">Guardar entrenamiento</button>
+      <div id="calendarBox"></div>
+    </div>
   `;
 
+  /* ======= BOTÓN PEGAR EJERCICIOS ======= */
   document.getElementById("bulkLoad").onclick = () => {
     $bulkText.value = "";
     $bulkModal.showModal();
@@ -232,7 +502,6 @@ function renderDay(){
         }
 
         day.exercises = exercises;
-
         saveState();
         render();
       }catch(err){
@@ -241,6 +510,7 @@ function renderDay(){
     }, { once:true });
   };
 
+  /* ======= + EJERCICIO ======= */
   document.getElementById("addExercise").onclick = async ()=>{
     const name = await openPrompt({
       title:"Nuevo ejercicio",
@@ -259,111 +529,150 @@ function renderDay(){
     render();
   };
 
+  /* ======= GUARDAR ENTRENAMIENTO (1-10) ======= */
+  document.getElementById("saveWorkout").onclick = () => {
+    if(!day.exercises.length){
+      alert("No hay ejercicios para guardar.");
+      return;
+    }
+
+    let sleepScore = prompt("¿Qué tan bien dormiste? (1 a 10)");
+    if(sleepScore === null) return;
+    sleepScore = Number(sleepScore);
+    if(isNaN(sleepScore) || sleepScore < 1 || sleepScore > 10){
+      alert("Dormir: ingresá un número del 1 al 10");
+      return;
+    }
+
+    let eatScore = prompt("¿Qué tan bien comiste? (1 a 10)");
+    if(eatScore === null) return;
+    eatScore = Number(eatScore);
+    if(isNaN(eatScore) || eatScore < 1 || eatScore > 10){
+      alert("Comida: ingresá un número del 1 al 10");
+      return;
+    }
+
+    const entry = {
+      id: uid(),
+      dayId: day.id,
+      dayName: day.name,
+      at: nowISO(),
+      sleepScore,
+      eatScore,
+      workout: cloneWorkoutDay(day)
+    };
+
+    state.history.unshift(entry);
+    saveState();
+    render();
+  };
+
+  /* ======= RENDER EJERCICIOS ======= */
   const host = document.getElementById("exercises");
 
   if(!day.exercises.length){
     host.innerHTML = `<div class="empty">Sin ejercicios.</div>`;
-    return;
-  }
-
-  day.exercises.forEach(ex=>{
-    const card = document.createElement("div");
-    card.className = "exercise";
-    card.innerHTML = `
-      <div class="exerciseTop">
-        <div class="exerciseName">${esc(ex.name)}</div>
-        <div class="row">
-          <button class="btn" data-r>Renombrar</button>
-          <button class="btn btn--danger" data-d>Borrar</button>
+  } else {
+    day.exercises.forEach(ex=>{
+      const card = document.createElement("div");
+      card.className = "exercise";
+      card.innerHTML = `
+        <div class="exerciseTop">
+          <div class="exerciseName">${esc(ex.name)}</div>
+          <div class="row">
+            <button class="btn" data-r>Renombrar</button>
+            <button class="btn btn--danger" data-d>Borrar</button>
+          </div>
         </div>
-      </div>
 
-      <div class="setTable"></div>
+        <div class="setTable"></div>
 
-      <div class="row" style="margin-top:10px">
-        <button class="btn btn--primary" data-add>+ Serie</button>
-      </div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn btn--primary" data-add>+ Línea</button>
+        </div>
 
-      <div class="noteBlock">
-        <div class="smallLabel">Notas del ejercicio</div>
-        <input class="input" data-note placeholder="Opcional" value="${esc(ex.note || "")}">
-      </div>
-    `;
-
-    card.querySelector("[data-r]").onclick = async ()=>{
-      const n = await openPrompt({
-        title:"Renombrar ejercicio",
-        label:"Nombre",
-        value:ex.name
-      });
-      if(!n) return;
-      ex.name = n;
-      saveState();
-      render();
-    };
-
-    card.querySelector("[data-d]").onclick = ()=>{
-      if(!confirm("¿Borrar ejercicio?")) return;
-      day.exercises = day.exercises.filter(x=>x.id!==ex.id);
-      saveState();
-      render();
-    };
-
-    const noteInput = card.querySelector("[data-note]");
-    noteInput.oninput = ()=>{
-      ex.note = noteInput.value;
-      saveState();
-    };
-
-    const table = card.querySelector(".setTable");
-
-    ex.sets.forEach((s,i)=>{
-      const row = document.createElement("div");
-      row.className = "setRow";
-      row.innerHTML = `
-        <input class="input" inputmode="numeric" placeholder="Series" value="${esc(s.series ?? "")}">
-        <input class="input" inputmode="numeric" placeholder="Reps" value="${esc(s.reps ?? "")}">
-        <input class="input" inputmode="numeric" placeholder="Kg" value="${esc(s.kg ?? "")}">
-        <input class="input" inputmode="numeric" placeholder="RIR" value="${esc(s.rir ?? "")}">
-        <button class="btn btn--danger del">✕</button>
+        <div class="noteBlock">
+          <div class="smallLabel">Notas del ejercicio</div>
+          <input class="input" data-note placeholder="Opcional" value="${esc(ex.note || "")}">
+        </div>
       `;
 
-      const [seriesI, repsI, kgI, rirI] = row.querySelectorAll("input");
-
-      const commit = ()=>{
-        s.series = seriesI.value;
-        s.reps   = repsI.value;
-        s.kg     = kgI.value;
-        s.rir    = rirI.value;
-        saveState();
-      };
-
-      seriesI.oninput = commit;   // ✅ FIX MINIMO: era SeriesI
-      repsI.oninput   = commit;
-      kgI.oninput     = commit;
-      rirI.oninput    = commit;
-
-      row.querySelector("button").onclick = () => {
-        if (ex.sets.length === 1) {
-          ex.sets[0] = blankSet();
-        } else {
-          ex.sets.splice(i, 1);
-        }
+      card.querySelector("[data-r]").onclick = async ()=>{
+        const n = await openPrompt({
+          title:"Renombrar ejercicio",
+          label:"Nombre",
+          value:ex.name
+        });
+        if(!n) return;
+        ex.name = n;
         saveState();
         render();
       };
 
-      table.appendChild(row);
+      card.querySelector("[data-d]").onclick = ()=>{
+        if(!confirm("¿Borrar ejercicio?")) return;
+        day.exercises = day.exercises.filter(x=>x.id!==ex.id);
+        saveState();
+        render();
+      };
+
+      const noteInput = card.querySelector("[data-note]");
+      noteInput.oninput = ()=>{
+        ex.note = noteInput.value;
+        saveState();
+      };
+
+      const table = card.querySelector(".setTable");
+
+      ex.sets.forEach((s,i)=>{
+        const row = document.createElement("div");
+        row.className = "setRow";
+        row.innerHTML = `
+          <input class="input" inputmode="numeric" placeholder="Series" value="${esc(s.series ?? "")}">
+          <input class="input" inputmode="numeric" placeholder="Reps" value="${esc(s.reps ?? "")}">
+          <input class="input" inputmode="numeric" placeholder="Kg" value="${esc(s.kg ?? "")}">
+          <input class="input" inputmode="numeric" placeholder="RIR" value="${esc(s.rir ?? "")}">
+          <button class="btn btn--danger del">✕</button>
+        `;
+
+        const [seriesI, repsI, kgI, rirI] = row.querySelectorAll("input");
+
+        const commit = ()=>{
+          s.series = seriesI.value;
+          s.reps   = repsI.value;
+          s.kg     = kgI.value;
+          s.rir    = rirI.value;
+          saveState();
+        };
+
+        seriesI.oninput = commit;
+        repsI.oninput   = commit;
+        kgI.oninput     = commit;
+        rirI.oninput    = commit;
+
+        row.querySelector("button").onclick = () => {
+          if (ex.sets.length === 1) ex.sets[0] = blankSet();
+          else ex.sets.splice(i, 1);
+          saveState();
+          render();
+        };
+
+        table.appendChild(row);
+      });
+
+      card.querySelector("[data-add]").onclick = ()=>{
+        ex.sets.push(blankSet());
+        saveState();
+        render();
+      };
+
+      host.appendChild(card);
     });
+  }
 
-    card.querySelector("[data-add]").onclick = ()=>{
-      ex.sets.push(blankSet());
-      saveState();
-      render();
-    };
-
-    host.appendChild(card);
-  });
+  /* ======= CALENDARIO VISUAL (con detalle en página) ======= */
+  const calendarBox = document.getElementById("calendarBox");
+  renderCalendarForDay(day, calendarBox);
 }
 
 /* ================= TOP ACTIONS ================= */
@@ -382,13 +691,14 @@ $btnAddDay.onclick = async ()=>{
     exercises:[]
   });
   selectedDayId = state.days[0].id;
+  calView = { y: new Date().getFullYear(), m: new Date().getMonth() };
   saveState();
   render();
 };
 
 $btnReset.onclick = ()=>{
   if(!confirm("¿Borrar todo?")) return;
-  state = { days: [] };
+  state = { days: [], history: [] };
   selectedDayId = null;
   saveState();
   render();
@@ -415,7 +725,10 @@ $fileInput.onchange = async ()=>{
     const txt = await f.text();
     const data = JSON.parse(txt);
     if(!data?.days) return alert("Archivo inválido");
+
+    if(!Array.isArray(data.history)) data.history = [];
     state = data;
+
     selectedDayId = state.days[0]?.id ?? null;
     saveState();
     render();

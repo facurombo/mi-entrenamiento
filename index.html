@@ -12,33 +12,32 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Mi Entreno">
-  <!-- Si no tenés iconos, podés borrar esta línea -->
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
 
   <meta name="theme-color" content="#0b0d10">
 </head>
 
-<dialog id="bulkModal">
-  <form method="dialog" class="modal">
-    <h3>Cargar ejercicios</h3>
+<body>
+  <!-- ✅ Bulk modal adentro del body (HTML válido) -->
+  <dialog id="bulkModal">
+    <form method="dialog" class="modal">
+      <h3>Cargar ejercicios</h3>
 
-    <div class="field">
-      <span>Pegá el JSON acá (lo que yo te paso)</span>
-      <textarea id="bulkText" class="input" rows="10" placeholder='Ejemplo:
+      <div class="field">
+        <span>Pegá el JSON acá (lo que yo te paso)</span>
+        <textarea id="bulkText" class="input" rows="10" placeholder='Ejemplo:
 [
   {"name":"Press banca","note":"","sets":[{"reps":"8","kg":"","rir":""}]}
 ]'></textarea>
-    </div>
+      </div>
 
-    <div class="modal__actions">
-      <button value="cancel" class="btn">Cancelar</button>
-      <button id="bulkOk" value="default" class="btn btn--primary">Cargar</button>
-    </div>
-  </form>
-</dialog>
+      <div class="modal__actions">
+        <button value="cancel" class="btn">Cancelar</button>
+        <button id="bulkOk" value="default" class="btn btn--primary">Cargar</button>
+      </div>
+    </form>
+  </dialog>
 
-
-<body>
   <header class="topbar">
     <div class="topbar__left">
       <h1>Mi Entreno</h1>
@@ -50,27 +49,23 @@
       <button id="btnExport" class="btn">Backup</button>
       <button id="btnImport" class="btn">Restaurar</button>
       <button id="btnReset" class="btn btn--danger">Reset</button>
+      <button id="btnWeight" class="btn">Peso</button>
     </div>
   </header>
 
   <main class="wrap">
-    <!-- Navegación simple vertical -->
     <nav class="tabs">
       <button class="tab tab--active" id="tabDays">Días</button>
       <button class="tab" id="tabRoutine">Rutina</button>
     </nav>
 
-    <!-- Pantalla Días -->
     <section class="card" id="screenDays">
       <h2>Días</h2>
       <div id="daysList" class="list"></div>
     </section>
 
-    <!-- Pantalla Rutina -->
     <section class="card" id="screenRoutine" hidden>
-      <div id="dayView" class="empty">
-        Elegí un día o creá uno nuevo.
-      </div>
+      <div id="dayView" class="empty">Elegí un día o creá uno nuevo.</div>
     </section>
   </main>
 
@@ -94,6 +89,7 @@
   <input id="fileInput" type="file" accept="application/json" hidden />
 
   <script src="app.js"></script>
+
   <script>
     // Tabs (vertical y simple)
     const tabDays = document.getElementById("tabDays");
@@ -129,4 +125,3 @@
   </script>
 </body>
 </html>
-

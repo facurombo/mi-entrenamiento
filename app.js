@@ -18,11 +18,14 @@ const $fileInput  = document.getElementById("fileInput");
 const $bulkModal = document.getElementById("bulkModal");
 const $bulkText  = document.getElementById("bulkText");
 
+/* ✅ modo vista */
+let viewMode = "workout"; // "workout" | "weight"
+
 let state = loadState();
 let selectedDayId = state.days[0]?.id ?? null;
 
 /* ===== Calendario (mes visible) ===== */
-let calView = { y: new Date().getFullYear(), m: new Date().getMonth() }; // m: 0-11
+let calView = { y: new Date().getFullYear(), m: new Date().getMonth() };
 
 /* ================= UTIL ================= */
 
@@ -37,14 +40,15 @@ function saveState(){
 function loadState(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return { days: [], history: [] };
+    if(!raw) return { days: [], history: [], weights: [] };
 
     const parsed = JSON.parse(raw);
     if(!parsed?.days) parsed.days = [];
-    if(!Array.isArray(parsed.history)) parsed.history = []; // ✅ migración
+    if(!Array.isArray(parsed.history)) parsed.history = [];
+    if(!Array.isArray(parsed.weights)) parsed.weights = [];
     return parsed;
   }catch{
-    return { days: [], history: [] };
+    return { days: [], history: [], weights: [] };
   }
 }
 
@@ -82,7 +86,6 @@ function openPrompt({ title, label, placeholder="", value="" }){
   });
 }
 
-/* fecha/hora */
 function nowISO(){
   return new Date().toISOString();
 }
@@ -97,7 +100,6 @@ function fmtDateTime(iso){
   return `${yy}-${mm}-${dd} ${hh}:${mi}`;
 }
 
-/* snapshot del día */
 function cloneWorkoutDay(day){
   return {
     name: day.name,
@@ -121,17 +123,15 @@ function ymdLocal(dateObj){
   const d = String(dateObj.getDate()).padStart(2,"0");
   return `${y}-${m}-${d}`;
 }
-
 function ymdFromISO(iso){
   return ymdLocal(new Date(iso));
 }
-
 function monthLabel(y,m){
   const names = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
   return `${names[m]} ${y}`;
 }
 
-/* render detalle en página (NO alerts) */
+/* detalle en página */
 function workoutDetailsHTML(item){
   const sleep = (typeof item.sleepScore === "number") ? `${item.sleepScore}/10` : "-";
   const eat   = (typeof item.eatScore === "number") ? `${item.eatScore}/10` : "-";
@@ -190,7 +190,7 @@ function renderCalendarForDay(day, hostEl){
   const first = new Date(y, m, 1);
   const last  = new Date(y, m+1, 0);
 
-  const startDow = (first.getDay() + 6) % 7; // lunes=0 ... domingo=6
+  const startDow = (first.getDay() + 6) % 7;
   const daysInMonth = last.getDate();
 
   const entries = (state.history || []).filter(h => h.dayId === day.id);
@@ -214,11 +214,7 @@ function renderCalendarForDay(day, hostEl){
       </div>
 
       <div id="calCells" class="calGrid" style="margin-top:8px;"></div>
-
-      <!-- Lista de registros del día tocado -->
       <div id="calDetailList" class="calList"></div>
-
-      <!-- Detalle en página (lo que antes era alert) -->
       <div id="calDetailView" style="margin-top:10px; display:none;"></div>
     </div>
   `;
@@ -264,38 +260,33 @@ function renderCalendarForDay(day, hostEl){
       `;
     }).join("");
 
-    // bind Ver
     $detailLst.querySelectorAll("[data-view]").forEach(btn=>{
       btn.onclick = () => {
         const id = btn.getAttribute("data-view");
         const item = (state.history || []).find(h => h.id === id);
         if(!item) return;
         showDetail(item);
-        // scroll al detalle (iPhone friendly)
         $detailVw.scrollIntoView({ behavior:"smooth", block:"start" });
       };
     });
 
-    // bind borrar
     $detailLst.querySelectorAll("[data-del]").forEach(btn=>{
       btn.onclick = () => {
         const id = btn.getAttribute("data-del");
         if(!confirm("¿Borrar este registro?")) return;
         state.history = (state.history || []).filter(h => h.id !== id);
         saveState();
-        render(); // refresca todo (calendario incluido)
+        render();
       };
     });
   }
 
-  // celdas "vacías" antes del 1
   for(let i=0;i<startDow;i++){
     const c = document.createElement("div");
     c.className = "calCell calCell--off";
     $cells.appendChild(c);
   }
 
-  // celdas del mes
   for(let d=1; d<=daysInMonth; d++){
     const dt = new Date(y, m, d);
     const key = ymdLocal(dt);
@@ -314,14 +305,12 @@ function renderCalendarForDay(day, hostEl){
 
     cell.querySelector("button").onclick = () => {
       renderDayEntriesList(key, list);
-      // scroll a lista
       $detailLst.scrollIntoView({ behavior:"smooth", block:"start" });
     };
 
     $cells.appendChild(cell);
   }
 
-  // navegación
   hostEl.querySelector("#calPrev").onclick = () => {
     calView.m--;
     if(calView.m < 0){ calView.m = 11; calView.y--; }
@@ -334,7 +323,6 @@ function renderCalendarForDay(day, hostEl){
     render();
   };
 
-  // estado inicial
   $detailLst.innerHTML = `<div class="pill">Tocá un día para ver registros</div>`;
 }
 
@@ -356,101 +344,188 @@ function normalizeExercise(ex){
   const setsIn = Array.isArray(ex?.sets) ? ex.sets : [];
   const sets = setsIn.length ? setsIn.map(normalizeSet) : [blankSet()];
 
-  return {
-    id: uid(),
-    name,
-    note,
-    sets
-  };
+  return { id: uid(), name, note, sets };
 }
 
 function parseBulk(text){
   const cleaned = text.trim();
   const parsed = JSON.parse(cleaned);
 
-  if(Array.isArray(parsed)){
-    return parsed.map(normalizeExercise).filter(Boolean);
-  }
-
-  if(parsed && Array.isArray(parsed.exercises)){
-    return parsed.exercises.map(normalizeExercise).filter(Boolean);
-  }
-
-  if(parsed && Array.isArray(parsed.days) && parsed.days[0]?.exercises){
-    return parsed.days[0].exercises.map(normalizeExercise).filter(Boolean);
-  }
+  if(Array.isArray(parsed)) return parsed.map(normalizeExercise).filter(Boolean);
+  if(parsed && Array.isArray(parsed.exercises)) return parsed.exercises.map(normalizeExercise).filter(Boolean);
+  if(parsed && Array.isArray(parsed.days) && parsed.days[0]?.exercises) return parsed.days[0].exercises.map(normalizeExercise).filter(Boolean);
 
   throw new Error("Formato no reconocido. Pegá un array de ejercicios o {exercises:[...]}");
 }
 
-/* ================= RENDER ================= */
+/* ================= PANTALLAS (tabs) ================= */
 
-function render(){
-  renderDays();
-  renderDay();
+function showDays(){
+  const tabDays = document.getElementById("tabDays");
+  const tabRoutine = document.getElementById("tabRoutine");
+  const screenDays = document.getElementById("screenDays");
+  const screenRoutine = document.getElementById("screenRoutine");
+  if(!tabDays || !tabRoutine || !screenDays || !screenRoutine) return;
+
+  tabDays.classList.add("tab--active");
+  tabRoutine.classList.remove("tab--active");
+  screenDays.hidden = false;
+  screenRoutine.hidden = true;
 }
 
-/* ---------- DÍAS ---------- */
+function showRoutine(){
+  const tabDays = document.getElementById("tabDays");
+  const tabRoutine = document.getElementById("tabRoutine");
+  const screenDays = document.getElementById("screenDays");
+  const screenRoutine = document.getElementById("screenRoutine");
+  if(!tabDays || !tabRoutine || !screenDays || !screenRoutine) return;
 
-function renderDays(){
-  $daysList.innerHTML = "";
+  tabRoutine.classList.add("tab--active");
+  tabDays.classList.remove("tab--active");
+  screenDays.hidden = true;
+  screenRoutine.hidden = false;
+}
 
-  if(!state.days.length){
-    $daysList.innerHTML = `<div class="empty">No hay días creados.</div>`;
-    return;
-  }
+function goToRoutineScreen(){
+  showRoutine();
+}
 
-  state.days.forEach(day=>{
-    const el = document.createElement("div");
-    el.className = "dayItem";
-    el.innerHTML = `
-      <div class="dayItem__meta">
-        <div class="dayItem__name">${esc(day.name)}</div>
-        <div class="dayItem__small">${day.exercises.length} ejercicios</div>
-      </div>
-      <div class="dayItem__actions">
-        <button class="btn" data-r>Renombrar</button>
-        <button class="btn btn--danger" data-d>Borrar</button>
+/* ================= PESO VIEW ================= */
+
+function toKgNumber(input){
+  const raw = (input ?? "").toString().trim().replace(",", ".");
+  const n = Number(raw);
+  if(!isFinite(n)) return null;
+  return n;
+}
+
+function renderWeightView(){
+  const items = Array.isArray(state.weights) ? state.weights.slice() : [];
+  items.sort((a,b)=> new Date(b.at) - new Date(a.at));
+
+  const last = items[0]?.kg;
+  const prev = items[1]?.kg;
+  const delta = (typeof last === "number" && typeof prev === "number") ? (last - prev) : null;
+
+  const kgVals = items.map(x=>x.kg).filter(x=> typeof x === "number");
+  const minKg = kgVals.length ? Math.min(...kgVals) : 0;
+  const maxKg = kgVals.length ? Math.max(...kgVals) : 0;
+  const span  = (maxKg - minKg) || 1;
+
+  const chartHTML = items.slice(0, 12).reverse().map(x=>{
+    const pct = (typeof x.kg === "number") ? Math.round(((x.kg - minKg) / span) * 100) : 0;
+    return `
+      <div style="flex:1; display:flex; flex-direction:column; gap:6px; align-items:stretch;">
+        <div style="height:64px; display:flex; align-items:flex-end;">
+          <div style="width:100%; border-radius:10px; background:rgba(255,255,255,0.08); height:${pct}%;"></div>
+        </div>
+        <div class="muted" style="font-size:11px; text-align:center;">${esc(String(x.kg ?? "-"))}</div>
       </div>
     `;
+  }).join("");
 
-    el.onclick = e=>{
-      if(e.target.tagName === "BUTTON") return;
-      selectedDayId = day.id;
-      // opcional: reset mes a actual cuando cambiás día
-      calView = { y: new Date().getFullYear(), m: new Date().getMonth() };
-      render();
-    };
+  $dayView.className = "";
+  $dayView.innerHTML = `
+    <div class="dayHeader">
+      <div class="dayTitle">
+        <div class="dayTitle__label">Sección</div>
+        <div class="dayTitle__name">Peso corporal</div>
+      </div>
 
-    el.querySelector("[data-r]").onclick = async e=>{
-      e.stopPropagation();
-      const name = await openPrompt({
-        title:"Renombrar día",
-        label:"Nombre",
-        value:day.name
-      });
-      if(!name) return;
-      day.name = name;
-      saveState();
-      render();
-    };
+      <div class="row">
+        <button id="backToWorkout" class="btn">Volver</button>
+        <button id="addWeightEntry" class="btn btn--primary">+ Registrar kg</button>
+      </div>
+    </div>
 
-    el.querySelector("[data-d]").onclick = e=>{
-      e.stopPropagation();
-      if(!confirm("¿Borrar día?")) return;
-      state.days = state.days.filter(d=>d.id!==day.id);
-      selectedDayId = state.days[0]?.id ?? null;
-      saveState();
-      render();
-    };
+    <div class="card" style="padding:12px;">
+      <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+        <div>
+          <div class="muted">Último</div>
+          <div style="font-weight:900; font-size:20px;">${typeof last === "number" ? esc(last.toFixed(1)) + " kg" : "-"}</div>
+        </div>
+        <div>
+          <div class="muted">Cambio vs anterior</div>
+          <div style="font-weight:900; font-size:16px;">${delta === null ? "-" : esc((delta>=0?"+":"") + delta.toFixed(1)) + " kg"}</div>
+        </div>
+        <div>
+          <div class="muted">Registros</div>
+          <div style="font-weight:900; font-size:16px;">${items.length}</div>
+        </div>
+      </div>
+    </div>
 
-    $daysList.appendChild(el);
-  });
+    <div class="card" style="padding:12px;">
+      <div style="font-weight:900; margin-bottom:10px;">Evolución (últimos)</div>
+      <div style="display:flex; gap:8px; align-items:flex-end;">
+        ${items.length ? chartHTML : `<div class="empty" style="width:100%;">Todavía no hay registros.</div>`}
+      </div>
+      <div class="muted" style="margin-top:8px;">(Gráfico simple para ver tendencia.)</div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <div style="font-weight:900; margin-top:4px;">Historial</div>
+      <div id="weightList"></div>
+    </div>
+  `;
+
+  document.getElementById("backToWorkout").onclick = ()=>{
+    viewMode = "workout";
+    render();
+  };
+
+  const $list = document.getElementById("weightList");
+  if(!items.length){
+    $list.innerHTML = `<div class="empty">Cargá tu primer peso con “+ Registrar kg”.</div>`;
+  }else{
+    $list.innerHTML = items.map(it=>{
+      return `
+        <div class="calItem">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div>
+              <div><b>${esc(String(it.kg ?? "-"))} kg</b></div>
+              <div class="calItemSmall">${esc(fmtDateTime(it.at))}</div>
+            </div>
+            <button class="btn btn--danger" data-wdel="${esc(it.id)}">✕</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    $list.querySelectorAll("[data-wdel]").forEach(btn=>{
+      btn.onclick = () => {
+        const id = btn.getAttribute("data-wdel");
+        if(!confirm("¿Borrar este peso?")) return;
+        state.weights = (state.weights || []).filter(x => x.id !== id);
+        saveState();
+        render();
+      };
+    });
+  }
+
+  document.getElementById("addWeightEntry").onclick = async () => {
+    const raw = await openPrompt({
+      title:"Registrar peso corporal",
+      label:"Kg (ej: 65.4)",
+      placeholder:"Ej: 65.4"
+    });
+    if(!raw) return;
+
+    const kg = toKgNumber(raw);
+    if(kg === null || kg <= 0 || kg > 400){
+      alert("Ingresá un número válido de kg.");
+      return;
+    }
+
+    state.weights.unshift({ id: uid(), at: nowISO(), kg });
+    saveState();
+    render();
+  };
 }
 
-/* ---------- DÍA / EJERCICIOS ---------- */
+/* ================= WORKOUT VIEW ================= */
 
-function renderDay(){
+function renderWorkoutView(){
   const day = selectedDayId ? findDay(selectedDayId) : null;
 
   if(!day){
@@ -475,14 +550,12 @@ function renderDay(){
 
     <div id="exercises"></div>
 
-    <!-- GUARDAR + CALENDARIO -->
     <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
       <button id="saveWorkout" class="btn btn--primary">Guardar entrenamiento</button>
       <div id="calendarBox"></div>
     </div>
   `;
 
-  /* ======= BOTÓN PEGAR EJERCICIOS ======= */
   document.getElementById("bulkLoad").onclick = () => {
     $bulkText.value = "";
     $bulkModal.showModal();
@@ -510,7 +583,6 @@ function renderDay(){
     }, { once:true });
   };
 
-  /* ======= + EJERCICIO ======= */
   document.getElementById("addExercise").onclick = async ()=>{
     const name = await openPrompt({
       title:"Nuevo ejercicio",
@@ -529,7 +601,6 @@ function renderDay(){
     render();
   };
 
-  /* ======= GUARDAR ENTRENAMIENTO (1-10) ======= */
   document.getElementById("saveWorkout").onclick = () => {
     if(!day.exercises.length){
       alert("No hay ejercicios para guardar.");
@@ -567,7 +638,6 @@ function renderDay(){
     render();
   };
 
-  /* ======= RENDER EJERCICIOS ======= */
   const host = document.getElementById("exercises");
 
   if(!day.exercises.length){
@@ -670,9 +740,91 @@ function renderDay(){
     });
   }
 
-  /* ======= CALENDARIO VISUAL (con detalle en página) ======= */
   const calendarBox = document.getElementById("calendarBox");
   renderCalendarForDay(day, calendarBox);
+}
+
+/* ================= RENDER ================= */
+
+function render(){
+  renderDays();
+  if(viewMode === "weight") renderWeightView();
+  else renderWorkoutView();
+
+  // ✅ re-enganchar el botón Peso y tabs si hace falta
+  bindWeightButton();
+}
+
+/* ================= BINDINGS ================= */
+
+function bindWeightButton(){
+  const btn = document.getElementById("btnWeight");
+  if(!btn) return;
+
+  btn.onclick = ()=>{
+    viewMode = "weight";
+    goToRoutineScreen(); // ✅ CLAVE: mostrar la pantalla Rutina
+    render();
+  };
+}
+
+/* ---------- DÍAS ---------- */
+
+function renderDays(){
+  $daysList.innerHTML = "";
+
+  if(!state.days.length){
+    $daysList.innerHTML = `<div class="empty">No hay días creados.</div>`;
+    return;
+  }
+
+  state.days.forEach(day=>{
+    const el = document.createElement("div");
+    el.className = "dayItem";
+    el.innerHTML = `
+      <div class="dayItem__meta">
+        <div class="dayItem__name">${esc(day.name)}</div>
+        <div class="dayItem__small">${day.exercises.length} ejercicios</div>
+      </div>
+      <div class="dayItem__actions">
+        <button class="btn" data-r>Renombrar</button>
+        <button class="btn btn--danger" data-d>Borrar</button>
+      </div>
+    `;
+
+    el.onclick = e=>{
+      if(e.target.tagName === "BUTTON") return;
+      selectedDayId = day.id;
+      viewMode = "workout";
+      calView = { y: new Date().getFullYear(), m: new Date().getMonth() };
+      render();
+      goToRoutineScreen(); // ✅ al elegir día, ir a Rutina
+    };
+
+    el.querySelector("[data-r]").onclick = async e=>{
+      e.stopPropagation();
+      const name = await openPrompt({
+        title:"Renombrar día",
+        label:"Nombre",
+        value:day.name
+      });
+      if(!name) return;
+      day.name = name;
+      saveState();
+      render();
+    };
+
+    el.querySelector("[data-d]").onclick = e=>{
+      e.stopPropagation();
+      if(!confirm("¿Borrar día?")) return;
+      state.days = state.days.filter(d=>d.id!==day.id);
+      selectedDayId = state.days[0]?.id ?? null;
+      saveState();
+      render();
+    };
+
+    $daysList.appendChild(el);
+  });
 }
 
 /* ================= TOP ACTIONS ================= */
@@ -685,23 +837,23 @@ $btnAddDay.onclick = async ()=>{
   });
   if(!name) return;
 
-  state.days.unshift({
-    id: uid(),
-    name,
-    exercises:[]
-  });
+  state.days.unshift({ id: uid(), name, exercises:[] });
   selectedDayId = state.days[0].id;
+  viewMode = "workout";
   calView = { y: new Date().getFullYear(), m: new Date().getMonth() };
   saveState();
   render();
+  goToRoutineScreen();
 };
 
 $btnReset.onclick = ()=>{
   if(!confirm("¿Borrar todo?")) return;
-  state = { days: [], history: [] };
+  state = { days: [], history: [], weights: [] };
   selectedDayId = null;
+  viewMode = "workout";
   saveState();
   render();
+  showDays();
 };
 
 $btnExport.onclick = ()=>{
@@ -727,6 +879,7 @@ $fileInput.onchange = async ()=>{
     if(!data?.days) return alert("Archivo inválido");
 
     if(!Array.isArray(data.history)) data.history = [];
+    if(!Array.isArray(data.weights)) data.weights = [];
     state = data;
 
     selectedDayId = state.days[0]?.id ?? null;
@@ -737,5 +890,15 @@ $fileInput.onchange = async ()=>{
   }
 };
 
-/* INIT */
+/* ================= INIT ================= */
+
+// enganchar tabs (por si querés mover todo al JS y no depender del script inline)
+(function bindTabs(){
+  const tabDays = document.getElementById("tabDays");
+  const tabRoutine = document.getElementById("tabRoutine");
+  if(tabDays) tabDays.addEventListener("click", showDays);
+  if(tabRoutine) tabRoutine.addEventListener("click", showRoutine);
+})();
+
+bindWeightButton();
 render();
